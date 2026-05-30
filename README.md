@@ -31,6 +31,28 @@ This repository contains a reusable Jenkins pipeline for:
 - The pipeline assumes `sonar-scanner`, `checkov`, `syft`, and `curl` are installed on the Jenkins agent.
 - Update `DEPTRACK_URL` and notification email in the `Jenkinsfile` environment block.
 
+### Ephemeral Pod (Kubernetes) Usage
+
+This library now provides a reusable pipeline entry `universalPipeline` (in `vars/universalPipeline.groovy`) that runs using Jenkins Kubernetes plugin ephemeral pods. Example usage from a Jenkinsfile:
+
+```groovy
+@Library('jenkins-shared-library') _
+universalPipeline(
+   GIT_URL: 'https://github.com/your-org/your-repo.git',
+   GIT_BRANCH: 'main',
+   ENVIRONMENT: 'staging'
+)
+```
+
+Requirements on the Jenkins side:
+- Jenkins Kubernetes plugin installed and configured to talk to your EKS cluster.
+- A `serviceAccount` in EKS (example: `jenkins-build-sa`) with needed IAM permissions.
+- Credentials in Jenkins:
+   - `sonar-token` (secret text)
+   - `deptrack-api-key` (secret text)
+
+See `k8s/podTemplate.yaml` for a sample Pod manifest for EKS agents.
+
 ## Push to GitHub
 
 Because this environment does not have Git installed, initialize Git and push from your machine:
