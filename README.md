@@ -1,93 +1,53 @@
-# Universal Jenkins Pipeline
+# Universal Jenkins Pipeline (Standalone)
 
-This repository contains a reusable Jenkins pipeline for:
+This repository contains a standalone Jenkins pipeline implementation that runs entirely from ci/universalPipeline.groovy.
 
-- Git checkout
-- Static Application Security Testing (SAST) via SonarQube
-- Infrastructure-as-Code (IaC) scanning via Checkov
-- Software Composition Analysis (SCA) via Dependency-Track
-- Notification on build result
+## Final Workflow
+
+1. Developer pushes code to Git.
+2. Jenkins job triggers on push/webhook.
+3. Root Jenkinsfile loads ci/universalPipeline.groovy.
+4. Branch validation is performed.
+5. Code checkout happens inside an ephemeral Kubernetes pod.
+6. Infrastructure scan runs with Checkov.
+7. SBOM is generated with Syft.
+8. Code quality scan runs with SonarQube.
+9. Docker image is built in a Docker-in-Docker pod.
+10. Image scan is performed with Trivy.
+11. Image is pushed to the configured registry if REGISTRY_URL is provided.
+12. Notification is sent after completion.
 
 ## Files
 
-- `Jenkinsfile` - main declarative pipeline
-- `src/gitClone.groovy` - Git checkout helper
-- `src/sonarqubeScanner.groovy` - SonarQube scan helper
-- `src/checkovScanner.groovy` - Checkov scan helper
-- `utils/dependencyTrack.groovy` - Dependency-Track BOM upload helper
-- `utils/notify.groovy` - Notification helper
+- Jenkinsfile - root pipeline loader that runs the standalone pipeline script.
+- Jenkinsfile.standalone - example Jenkinsfile showing how to load the standalone script.
+- ci/universalPipeline.groovy - standalone pipeline script with all workflow stages.
+- ci/k8s/sonar-pod.yaml - ephemeral pod template for SonarQube stage.
+- ci/k8s/checkov-pod.yaml - ephemeral pod template for Checkov stage.
+- ci/k8s/sbom-pod.yaml - ephemeral pod template for SBOM generation.
+- ci/k8s/docker-pod.yaml - ephemeral pod template for Docker build and image scan.
 
 ## Usage
 
-1. Open Jenkins and create a new pipeline job.
-2. Point the job to this repository or paste the `Jenkinsfile`.
-3. Configure credentials / environment variables:
-   - `SONAR_TOKEN` for SonarQube authentication
-   - `DEPTRACK_API_KEY` for Dependency-Track API access
-4. Provide `GIT_URL` and `GIT_BRANCH` parameters if needed.
+1. Configure Jenkins Kubernetes plugin to use your EKS cluster.
+2. Ensure the EKS pod service account (for example jenkins-build-sa) exists and has required IAM permissions.
+3. Add the required Jenkins credentials:
+   - sonar-token
+   - deptrack-api-key
+   - egistry-credentials
+4. Use Jenkinsfile.standalone or the root Jenkinsfile to run the pipeline.
+
+### Example
+
+
 
 ## Notes
 
-- The pipeline assumes `sonar-scanner`, `checkov`, `syft`, and `curl` are installed on the Jenkins agent.
-- Update `DEPTRACK_URL` and notification email in the `Jenkinsfile` environment block.
-
-### Ephemeral Pod (Kubernetes) Usage
-
-This library now provides a reusable pipeline entry `universalPipeline` (in `vars/universalPipeline.groovy`) that runs using Jenkins Kubernetes plugin ephemeral pods. Example usage from a Jenkinsfile:
-
-```groovy
-@Library('jenkins-shared-library') _
-universalPipeline(
-   GIT_URL: 'https://github.com/your-org/your-repo.git',
-   GIT_BRANCH: 'main',
-   ENVIRONMENT: 'staging'
-)
-```
-
-Requirements on the Jenkins side:
-- Jenkins Kubernetes plugin installed and configured to talk to your EKS cluster.
-- A `serviceAccount` in EKS (example: `jenkins-build-sa`) with needed IAM permissions.
-- Credentials in Jenkins:
-   - `sonar-token` (secret text)
-   - `deptrack-api-key` (secret text)
-
-See `k8s/podTemplate.yaml` for a sample Pod manifest for EKS agents.
-
-### Pipeline Flow
-
-The `universalPipeline` entry implements the following flow (matches your requested flow):
-
-- Developer Push Code
-- Jenkins Trigger
-- Load Shared Library (this repo)
-- Load GlobalConfig (from `jenkins-global-config` repo when configured)
-- Environment Validation (reads `environments.yaml`)
-- Branch Validation (regex-based)
-- AWS Role Assumption (if `AWS_ROLE_ARN` provided)
-- Code Checkout
-- Security Scanning (Checkov, SBOM generation)
-- Code Quality Scan (SonarQube)
-- Docker Build
-- Image Scan (Trivy)
-- Push Artifact / Image (to configured registry)
-
-Configure the following Jenkins credentials (recommended ids):
-- `github-credentials` (username/password or token)
-- `sonar-token` (secret text)
-- `deptrack-api-key` (secret text)
-- `aws-credentials` (AWS credentials)
-- `registry-credentials` (username/password for registry)
-
+- This repository no longer uses a Jenkins Shared Library.
+- All pipeline logic is contained in ci/universalPipeline.groovy.
+- The pipeline is configured to run per-stage ephemeral pods in EKS.
+- If you use a registry, set REGISTRY_URL and provide egistry-credentials.
 
 ## Push to GitHub
 
-Because this environment does not have Git installed, initialize Git and push from your machine:
-
-```bash
-cd universal-jenkins-pipeline
-git init
-git add .
-git commit -m "Add universal Jenkins pipeline"
-git remote add origin https://github.com/<your-org>/<your-repo>.git
-git push -u origin main
-```
+This repo is already on GitHub. If you want to copy the standalone pipeline into a new application repo, copy the full ci/ folder and use Jenkinsfile.standalone.
