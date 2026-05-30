@@ -29,6 +29,20 @@ spec:
         limits:
           cpu: "0.5"
           memory: "512Mi"
+    - name: trivy
+      image: aquasec/trivy:0.45.0
+      resources:
+        limits:
+          cpu: "0.5"
+          memory: "512Mi"
+    - name: docker
+      image: docker:24-dind
+      securityContext:
+        privileged: true
+      resources:
+        limits:
+          cpu: "2"
+          memory: "2Gi"
     - name: curl
       image: curlimages/curl:7.88.1
   restartPolicy: Never

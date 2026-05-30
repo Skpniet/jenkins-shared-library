@@ -53,6 +53,32 @@ Requirements on the Jenkins side:
 
 See `k8s/podTemplate.yaml` for a sample Pod manifest for EKS agents.
 
+### Pipeline Flow
+
+The `universalPipeline` entry implements the following flow (matches your requested flow):
+
+- Developer Push Code
+- Jenkins Trigger
+- Load Shared Library (this repo)
+- Load GlobalConfig (from `jenkins-global-config` repo when configured)
+- Environment Validation (reads `environments.yaml`)
+- Branch Validation (regex-based)
+- AWS Role Assumption (if `AWS_ROLE_ARN` provided)
+- Code Checkout
+- Security Scanning (Checkov, SBOM generation)
+- Code Quality Scan (SonarQube)
+- Docker Build
+- Image Scan (Trivy)
+- Push Artifact / Image (to configured registry)
+
+Configure the following Jenkins credentials (recommended ids):
+- `github-credentials` (username/password or token)
+- `sonar-token` (secret text)
+- `deptrack-api-key` (secret text)
+- `aws-credentials` (AWS credentials)
+- `registry-credentials` (username/password for registry)
+
+
 ## Push to GitHub
 
 Because this environment does not have Git installed, initialize Git and push from your machine:

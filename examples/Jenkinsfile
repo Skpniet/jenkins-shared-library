@@ -1,0 +1,12 @@
+@Library('jenkins-shared-library') _
+
+universalPipeline(
+  GIT_URL: 'https://github.com/your-org/your-repo.git',
+  GIT_BRANCH: 'main',
+  ENVIRONMENT: 'development',
+  GLOBAL_CONFIG_REPO: 'Skpniet/jenkins-global-config',
+  AWS_ROLE_ARN: 'arn:aws:iam::123456789012:role/jenkins-build-role',
+  REGISTRY_URL: '123456789012.dkr.ecr.us-west-2.amazonaws.com',
+  IMAGE_NAME: 'my-app',
+  IMAGE_TAG: 'v1-${BUILD_NUMBER}'
+)
