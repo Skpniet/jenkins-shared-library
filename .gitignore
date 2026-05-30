@@ -1,0 +1,5 @@
+# Ignore generated SBOM and temporary files
+sbom.json
+*.log
+*.tmp
+*.bak
