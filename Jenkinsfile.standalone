@@ -1,0 +1,12 @@
+node {
+  stage('Run Universal Pipeline') {
+    def universal = load 'ci/universalPipeline.groovy'
+    universal.call(
+      GIT_URL: 'https://github.com/your-org/your-repo.git',
+      GIT_BRANCH: 'main',
+      ENVIRONMENT: 'development',
+      REGISTRY_URL: '123456789012.dkr.ecr.us-west-2.amazonaws.com',
+      IMAGE_NAME: 'my-app'
+    )
+  }
+}
