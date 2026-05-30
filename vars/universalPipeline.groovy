@@ -25,28 +25,21 @@ def call(Map params = [:]) {
     node("universal-pipeline-${env.BUILD_ID}") {
             try {
                 stage('Load GlobalConfig') {
-                    if (params.GLOBAL_CONFIG_REPO) {
-                        withCredentials([usernamePassword(credentialsId: 'github-credentials', usernameVariable: 'GIT_USER', passwordVariable: 'GIT_TOKEN')]) {
-                            sh "rm -rf global-config || true"
-                            sh "git clone https://${GIT_USER}:${GIT_TOKEN}@github.com/${params.GLOBAL_CONFIG_REPO}.git global-config || true"
-                        }
-                    } else {
-                        echo 'No GLOBAL_CONFIG_REPO provided; skipping.'
+                    // Use built-in globalConfig groovy in this library
+                    script {
+                        cfg = globalConfig()
+                        echo "Loaded globalConfig: defaultEnvironment=${cfg.getConfig().defaultEnvironment}"
                     }
                 }
 
                 stage('Environment Validation') {
                     script {
                         try {
-                            if (fileExists('global-config/config/environments.yaml')) {
-                                def envCfg = readYaml file: 'global-config/config/environments.yaml'
-                                if (!envCfg.environments[envName]) {
-                                    error "Environment ${envName} is not defined in global-config"
-                                }
-                                echo "Environment ${envName} validated"
-                            } else {
-                                echo 'No global-config environments.yaml found; skipping validation.'
+                            def envCfg = cfg.envConfig(envName)
+                            if (!envCfg) {
+                                error "Environment ${envName} is not defined in globalConfig"
                             }
+                            echo "Environment ${envName} validated against globalConfig"
                         } catch (e) {
                             echo "Environment validation failed: ${e}"
                             throw e
