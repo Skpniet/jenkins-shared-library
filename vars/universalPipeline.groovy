@@ -9,28 +9,29 @@ def call(Map params = [:]) {
     def trivyImage = params.TRIVY_IMAGE ?: 'aquasec/trivy:0.45.0'
     def dockerImage = params.DOCKER_IMAGE ?: 'docker:24-dind'
 
-    def podYaml = libraryResource('k8s/podTemplate.yaml') ?: null
+    // helper to run a single-stage pod using a resource YAML
+    def runWithPod = { String resourcePath, Closure body ->
+        def yaml = libraryResource(resourcePath)
+        if (!yaml) {
+            error "Pod template resource not found: ${resourcePath}"
+        }
+        podTemplate(label: "universal-pipeline-${env.BUILD_ID}-${resourcePath.replaceAll('[^a-zA-Z0-9]','')}", yaml: yaml) {
+            node("universal-pipeline-${env.BUILD_ID}-${resourcePath.replaceAll('[^a-zA-Z0-9]','')}") {
+                body()
+            }
+        }
+    }
 
-    podTemplate(label: "universal-pipeline-${env.BUILD_ID}", yaml: podYaml, containers: [
-        containerTemplate(name: 'sonar', image: sonarImage, ttyEnabled: true, command: 'cat'),
-        containerTemplate(name: 'checkov', image: checkovImage, ttyEnabled: true, command: 'cat'),
-        containerTemplate(name: 'sbom', image: syftImage, ttyEnabled: true, command: 'cat'),
-        containerTemplate(name: 'trivy', image: trivyImage, ttyEnabled: true, command: 'cat'),
-        containerTemplate(name: 'docker', image: dockerImage, privileged: true, ttyEnabled: true, command: 'dockerd-entrypoint.sh')
-    ]) {
-        node("universal-pipeline-${env.BUILD_ID}") {
+    node("universal-pipeline-${env.BUILD_ID}") {
             try {
                 stage('Load GlobalConfig') {
-                    // Clone global config repo if available
-                    script {
-                        if (params.GLOBAL_CONFIG_REPO) {
-                            withCredentials([usernamePassword(credentialsId: 'github-credentials', usernameVariable: 'GIT_USER', passwordVariable: 'GIT_TOKEN')]) {
-                                sh "rm -rf global-config || true"
-                                sh "git clone https://${GIT_USER}:${GIT_TOKEN}@github.com/${params.GLOBAL_CONFIG_REPO}.git global-config || true"
-                            }
-                        } else {
-                            echo 'No GLOBAL_CONFIG_REPO provided; skipping.'
+                    if (params.GLOBAL_CONFIG_REPO) {
+                        withCredentials([usernamePassword(credentialsId: 'github-credentials', usernameVariable: 'GIT_USER', passwordVariable: 'GIT_TOKEN')]) {
+                            sh "rm -rf global-config || true"
+                            sh "git clone https://${GIT_USER}:${GIT_TOKEN}@github.com/${params.GLOBAL_CONFIG_REPO}.git global-config || true"
                         }
+                    } else {
+                        echo 'No GLOBAL_CONFIG_REPO provided; skipping.'
                     }
                 }
 
@@ -84,56 +85,49 @@ def call(Map params = [:]) {
                 }
 
                 stage('Code Checkout') {
-                    if (repoUrl) {
-                        checkout([$class: 'GitSCM', branches: [[name: branch]], userRemoteConfigs: [[url: repoUrl]]])
-                    } else {
-                        checkout scm
+                    // Run checkout inside a lightweight generic pod so workspace is set
+                    runWithPod('k8s/sonar-pod.yaml') {
+                        if (repoUrl) {
+                            gitClone(url: repoUrl, branch: branch)
+                        } else {
+                            checkout scm
+                        }
                     }
                 }
 
-                stage('Security Scanning (IaC & SCA)') {
-                    parallel(
-                        "Checkov": {
-                            container('checkov') {
-                                sh 'checkov -d . -o compact || true'
-                            }
-                        },
-                        "SBOM": {
-                            container('sbom') {
-                                sh 'syft . -o cyclonedx-json=sbom.json || true'
-                            }
-                        }
-                    )
+                stage('Security Scanning (IaC)') {
+                    runWithPod('k8s/checkov-pod.yaml') {
+                        checkovScanner(directory: '.')
+                    }
+                }
+
+                stage('SBOM (SCA)') {
+                    runWithPod('k8s/sbom-pod.yaml') {
+                        sh 'syft . -o cyclonedx-json=sbom.json || true'
+                    }
                 }
 
                 stage('Code Quality (SAST)') {
-                    container('sonar') {
-                        withCredentials([string(credentialsId: 'sonar-token', variable: 'SONAR_TOKEN')]) {
-                            sh "sonar-scanner -Dsonar.projectKey=${env.JOB_NAME}-${env.BUILD_NUMBER} -Dsonar.sources=. -Dsonar.host.url=${env.SONAR_HOST} -Dsonar.login=${SONAR_TOKEN} || true"
-                        }
+                    runWithPod('k8s/sonar-pod.yaml') {
+                        sonarqubeScanner(projectKey: "${env.JOB_NAME}-${env.BUILD_NUMBER}", host: env.SONAR_HOST, tokenCred: 'sonar-token')
                     }
                 }
 
                 stage('Docker Build & Image Scan') {
-                    script {
+                    runWithPod('k8s/docker-pod.yaml') {
                         def imageTag = params.IMAGE_TAG ?: "${env.BUILD_ID}"
                         def imageName = params.IMAGE_NAME ?: "${env.JOB_NAME}:${imageTag}"
 
-                        container('docker') {
-                            sh "docker build -t ${imageName} . || true"
-                        }
+                        sh "docker build -t ${imageName} . || true"
 
-                        container('trivy') {
-                            sh "trivy image --exit-code 1 --severity HIGH ${imageName} || true"
-                        }
+                        // run trivy in docker pod by calling trivy via docker image (fallback)
+                        sh "docker run --rm aquasec/trivy:0.45.0 image --exit-code 1 --severity HIGH ${imageName} || true"
 
                         if (params.REGISTRY_URL) {
-                            container('docker') {
-                                sh "docker tag ${imageName} ${params.REGISTRY_URL}/${imageName} || true"
-                                withCredentials([usernamePassword(credentialsId: 'registry-credentials', usernameVariable: 'REG_USER', passwordVariable: 'REG_PASS')]) {
-                                    sh "echo ${REG_PASS} | docker login ${params.REGISTRY_URL} -u ${REG_USER} --password-stdin || true"
-                                    sh "docker push ${params.REGISTRY_URL}/${imageName} || true"
-                                }
+                            sh "docker tag ${imageName} ${params.REGISTRY_URL}/${imageName} || true"
+                            withCredentials([usernamePassword(credentialsId: 'registry-credentials', usernameVariable: 'REG_USER', passwordVariable: 'REG_PASS')]) {
+                                sh "echo ${REG_PASS} | docker login ${params.REGISTRY_URL} -u ${REG_USER} --password-stdin || true"
+                                sh "docker push ${params.REGISTRY_URL}/${imageName} || true"
                             }
                         } else {
                             echo 'No REGISTRY_URL provided; skipping push.'
